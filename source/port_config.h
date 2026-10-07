@@ -33,10 +33,16 @@
 #define PORT_SO_REGION_BYTES (16u * 1024 * 1024)
 
 /* Sequential archive streaming (.gla zones/textures): coalesce the small
- * reads (a8retry pattern), 32 KB stdio buffering instead of 1 KB. No clocks. */
+ * reads (a8retry pattern), 32 KB stdio buffering instead of 1 KB. */
 #define RT_IO_READAHEAD   1
 #define RT_IO_PATTERN_STATS 1
 #define RT_STDIO_READ_BUF 32768
+
+/* Loads run inside one frame (step()): the loop cannot poll then, so a
+ * watcher thread boosts the CPU for a frame past 50 ms, until it ends.
+ * Load-only: gameplay frames never trigger it. Off with
+ * [performance] boost_cpu_when_loading. */
+#define RT_BOOST_WATCH_THREAD 1
 
 /* The game has no controller support of its own: one player. */
 #define RT_PAD_MAX_PLAYERS 1

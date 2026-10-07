@@ -12,6 +12,7 @@
  * the frame hooks, the boost and the frame count see every frame. MIT.
  */
 #include <EGL/egl.h>
+#include <GLES2/gl2.h>
 #include <switch.h>
 
 #include "gl_layer.h"
@@ -105,6 +106,43 @@ int tdkr_egl_set_current(int id) {
 }
 
 void tdkr_egl_swap(void) {
-  if (g_ready)
+  if (g_ready) {
+    tdkr_crosshair_draw();
     b_eglSwapBuffers(g_dpy, g_surf);
+  }
+}
+
+/* A small centring crosshair in the middle of the screen (gameplay only):
+ * four scissored clears over the finished frame, engine GL state saved and
+ * put back. [display] crosshair disables it. */
+void tdkr_crosshair_draw(void) {
+  static int on = -1;
+  if (on < 0)
+    on = rt_config_bool("display", "crosshair");
+  if (!on || tdkr_zone_is_menu())
+    return;
+  if (eglGetCurrentContext() != g_ctx[0])
+    return;
+  int w = 1280, h = 720;
+  dcr_window_size(&w, &h);
+  GLboolean se = glIsEnabled(GL_SCISSOR_TEST);
+  GLint box[4];
+  GLfloat cc[4];
+  glGetIntegerv(GL_SCISSOR_BOX, box);
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
+  int cx = w / 2, cy = h / 2;
+  glEnable(GL_SCISSOR_TEST);
+  glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+  glScissor(cx - 6, cy - 1, 4, 2);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glScissor(cx + 2, cy - 1, 4, 2);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glScissor(cx - 1, cy - 6, 2, 4);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glScissor(cx - 1, cy + 2, 2, 4);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glScissor(box[0], box[1], box[2], box[3]);
+  glClearColor(cc[0], cc[1], cc[2], cc[3]);
+  if (!se)
+    glDisable(GL_SCISSOR_TEST);
 }

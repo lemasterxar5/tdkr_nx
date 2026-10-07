@@ -6,7 +6,7 @@
 #include "touchmap.h"
 #include "util.h"
 
-#define MAX_SLOTS 16
+#define MAX_SLOTS 24
 
 static tm_touch_fn g_touch;
 static tm_key_fn g_key;
@@ -94,6 +94,10 @@ int tm_up(uint32_t key) {
   return s;
 }
 
+#define VJOY_KEY 0x80000000u
+#define VCAM_KEY 0x80000001u
+#define VBIND_KEY(i) (0x80000010u | (uint32_t)(i))
+
 void tm_pad_config(const TmPad *p) {
   if (p)
     g_pad_cfg = *p;
@@ -101,13 +105,21 @@ void tm_pad_config(const TmPad *p) {
     memset(&g_pad_cfg, 0, sizeof g_pad_cfg);
 }
 
+/* Zone/menu change: lift the held drag fingers so nothing stays pressed. */
+void tm_pad_reset(void) {
+  if (g_joy_on) {
+    g_joy_on = 0;
+    tm_up(VJOY_KEY);
+  }
+  if (g_cam_on) {
+    g_cam_on = 0;
+    tm_up(VCAM_KEY);
+  }
+}
+
 /* 1280x720-space point to window pixels. */
 static int scX(int x, int w) { return (int)((int64_t)x * w / 1280); }
 static int scY(int y, int h) { return (int)((int64_t)y * h / 720); }
-
-#define VJOY_KEY 0x80000000u
-#define VCAM_KEY 0x80000001u
-#define VBIND_KEY(i) (0x80000010u | (uint32_t)(i))
 
 void tm_pad_poll(u64 now, u64 down, u64 up, const float *sticks, int win_w, int win_h) {
   if (!g_pad_cfg.enable)
@@ -125,13 +137,13 @@ void tm_pad_poll(u64 now, u64 down, u64 up, const float *sticks, int win_w, int 
   }
   float lm = sqrtf(lx * lx + ly * ly), rm = sqrtf(rx * rx + ry * ry);
 
-  /* Left input: hold-and-drag the widget (hysteresis 0.30/0.18). */
-  if (!g_joy_on && lm > 0.30f && g_pad_cfg.touch) {
+  /* Left input: hold-and-drag the widget (hysteresis 0.25/0.15). */
+  if (!g_joy_on && lm > 0.25f && g_pad_cfg.touch) {
     g_joy_on = 1;
     tm_down(VJOY_KEY, scX(g_pad_cfg.joy_x, win_w), scY(g_pad_cfg.joy_y, win_h));
   }
   if (g_joy_on) {
-    if (lm < 0.18f) {
+    if (lm < 0.15f || !g_pad_cfg.touch) {
       g_joy_on = 0;
       tm_up(VJOY_KEY);
     } else {
@@ -143,14 +155,14 @@ void tm_pad_poll(u64 now, u64 down, u64 up, const float *sticks, int win_w, int 
 
   /* Right stick: swipe to look, ratcheting back past cam_r (unless a
    * native stick owns it: cam_touch 0). */
-  if (!g_cam_on && rm > 0.30f && g_pad_cfg.cam_touch && g_pad_cfg.touch) {
+  if (!g_cam_on && rm > 0.25f && g_pad_cfg.cam_touch && g_pad_cfg.touch) {
     g_cam_on = 1;
     g_cam_x = 640;
     g_cam_y = 360;
     tm_down(VCAM_KEY, scX(g_cam_x, win_w), scY(g_cam_y, win_h));
   }
   if (g_cam_on) {
-    if (rm < 0.18f) {
+    if (rm < 0.15f || !g_pad_cfg.touch || !g_pad_cfg.cam_touch) {
       g_cam_on = 0;
       tm_up(VCAM_KEY);
     } else {
@@ -170,18 +182,19 @@ void tm_pad_poll(u64 now, u64 down, u64 up, const float *sticks, int win_w, int 
     }
   }
 
-  /* Buttons: taps and/or keys. */
-  for (int i = 0; i < g_pad_cfg.nbinds; i++) {
-    const TmBind *b = &g_pad_cfg.binds[i];
-    if (g_pad_cfg.touch && b->tap_x >= 0) {
-      if (down & b->btn)
-        tm_down(VBIND_KEY(i), scX(b->tap_x, win_w), scY(b->tap_y, win_h));
-      if (up & b->btn)
-        tm_up(VBIND_KEY(i));
+  /* Buttons: taps and/or keys (nothing to do with no edges). */
+  if (down | up)
+    for (int i = 0; i < g_pad_cfg.nbinds; i++) {
+      const TmBind *b = &g_pad_cfg.binds[i];
+      if (g_pad_cfg.touch && b->tap_x >= 0) {
+        if (down & b->btn)
+          tm_down(VBIND_KEY(i), scX(b->tap_x, win_w), scY(b->tap_y, win_h));
+        if (up & b->btn)
+          tm_up(VBIND_KEY(i));
+      }
+      if ((down & b->btn) && b->key >= 0 && g_key)
+        g_key(b->key, 1);
+      if ((up & b->btn) && b->key >= 0 && g_key)
+        g_key(b->key, 0);
     }
-    if ((down & b->btn) && b->key >= 0 && g_key)
-      g_key(b->key, 1);
-    if ((up & b->btn) && b->key >= 0 && g_key)
-      g_key(b->key, 0);
-  }
 }

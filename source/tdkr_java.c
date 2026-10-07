@@ -81,8 +81,9 @@ void tdkr_gamepad_set_native(int on) {
     g_nat.slideChanged(g_jni_env, g_lib_cls, on);
   if (g_nat.powerAConnected)
     g_nat.powerAConnected(g_jni_env, g_lib_cls, on);
-  debugPrintf("[input] native gamepad %s: Xperia slide + PowerA %sannounced\n", on ? "on" : "off",
-              on ? "" : "un");
+  debugPrintf("[input] native gamepad %s (xperia=%d slide=%d powera=%d rjoy=%d keys=%d touch=%p)\n",
+              on ? "on" : "off", !!g_nat.setXperiaPlay, !!g_nat.slideChanged, !!g_nat.powerAConnected,
+              !!g_nat.powerARightJoy, !!g_nat.onKeyDown && !!g_nat.onKeyUp, (void *)g_nat.touchEvent);
 }
 
 /* A held right stick, as the game reads it (a8retry's 12%/85% curve). */
@@ -365,3 +366,61 @@ const char *const jni_class_supers[][2] = {
 const char *const jni_missing_classes[] = {
     "com/google/android/gms/*", "com/android/vending/*", "com/amazon/*", NULL,
 };
+
+/* -------------------------------------------------------------- monitors */
+/* JNIEnv's MonitorEnter and MonitorExit, which the runtime answers without
+ * locking anything (jni_core.c: both return 0). The Dead Space port found
+ * what that costs: an engine whose loading threads share buffers through a
+ * monitor reads each other's bytes -- a model that loads as nothing, a size
+ * of a gigabyte, a fault somewhere in the loader on some starts and not on
+ * others. libKRAS.so streams its zones and textures the same way; one lock
+ * per object locked (few, never let go), patched into the JNI table's
+ * standard slots (217/218: the runtime's enum is the standard 233-entry
+ * JNINativeInterface). Uncontended it costs one mutex round-trip. */
+#define JNI_MONITOR_ENTER 217 /* JNINativeInterface's slots */
+#define JNI_MONITOR_EXIT  218
+#define MAX_MONITORS 16
+
+static struct {
+  const void *obj;
+  RMutex lock;
+} g_monitors[MAX_MONITORS];
+static int g_nmonitors;
+static Mutex g_monitors_lock;
+
+static RMutex *monitor_of(const void *obj) {
+  mutexLock(&g_monitors_lock);
+  int i = 0;
+  while (i < g_nmonitors && g_monitors[i].obj != obj)
+    i++;
+  if (i == MAX_MONITORS) {
+    i--; /* more objects than locks: the last one is shared */
+  } else if (i == g_nmonitors) {
+    g_monitors[i].obj = obj;
+    rmutexInit(&g_monitors[i].lock);
+    g_nmonitors++;
+    debugPrintf("[java] a monitor for %p\n", obj);
+  }
+  mutexUnlock(&g_monitors_lock);
+  return &g_monitors[i].lock;
+}
+
+static int monitor_enter(void *env, void *obj) {
+  (void)env;
+  rmutexLock(monitor_of(obj));
+  return 0;
+}
+
+static int monitor_exit(void *env, void *obj) {
+  (void)env;
+  rmutexUnlock(monitor_of(obj));
+  return 0;
+}
+
+/* After jni_init(): the engine's synchronized blocks lock for real. */
+void tdkr_java_patch_monitors(void) {
+  mutexInit(&g_monitors_lock);
+  void **env = *(void ***)g_jni_env; /* the function table */
+  env[JNI_MONITOR_ENTER] = (void *)monitor_enter;
+  env[JNI_MONITOR_EXIT] = (void *)monitor_exit;
+}

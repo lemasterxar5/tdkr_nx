@@ -16,6 +16,8 @@
 
 #include "dcr_path.h"
 #include "dcr_setup.h"
+#include "bionic_io.h"
+#include "dcr_boost.h"
 #include "error.h"
 #include "gl_layer.h"
 #include "rt_applet.h"
@@ -90,6 +92,7 @@ int port_load(const char *apk) {
     g_nat.field = (void *)so_try_find_addr_rx(&g_mod, "Java_com_gameloft_glf_GL2JNILib_" sym); \
     if (required && !g_nat.field)                                                          \
       fatal_error("libKRAS.so has no GL2JNILib." sym);                                     \
+    debugPrintf("[boot] native GL2JNILib." sym ": %s\n", g_nat.field ? "found" : "MISSING"); \
   } while (0)
 
 static void find_natives(void) {
@@ -142,9 +145,19 @@ void port_focus_gained(void) {
   tdkr_audio_pause(0);
 }
 
+/* HOME and sleep freeze the whole process; the runtime's clocks find each
+ * freeze (whether or not focus messages came). What Android does around it:
+ * the focus lost, then back. */
+void port_process_frozen(unsigned count) {
+  debugPrintf("[game] the process was held (HOME menu or sleep; freeze %u)\n", count);
+  port_focus_lost();
+  port_focus_gained();
+}
+
 void port_run(void) {
   so_execute_init_array(&g_mod); /* System.loadLibrary: the constructors ... */
   jni_init();
+  tdkr_java_patch_monitors(); /* synchronized blocks lock for real from here on */
   void *env = g_jni_env;
   g_lib_cls = jni_class(TDKR_CLS_LIB)->obj;
   find_natives();
@@ -153,7 +166,6 @@ void port_run(void) {
   if (on_load) /* ... then JNI_OnLoad */
     debugPrintf("[boot] JNI_OnLoad -> 0x%x\n", (unsigned)on_load(g_jni_vm, NULL));
 
-  tdkr_gamepad_native_init();
   tdkr_input_init();
 
   /* GL2JNIActivity.onCreate / GLSurfaceView: init caches the JNI IDs and makes
@@ -164,6 +176,10 @@ void port_run(void) {
    * and the explicit one) stays deferred until initGL+resize ran; if App is
    * created there, the game proceeds, otherwise the next crash/log tells us. */
   g_nat.init(env, g_lib_cls);
+  /* Announce after init (not before): init-time resets must not wipe it.
+   * Binds depend on the flag: rebuild them now that it is final. */
+  tdkr_gamepad_native_init();
+  tdkr_input_refresh();
   helper_native_init("Java_com_gameloft_android_AMAZ_GloftKRAS_GLUtils_SUtils_nativeInit",
                      TDKR_CLS_BASE "/GLUtils/SUtils");
   helper_native_init("Java_com_gameloft_android_AMAZ_GloftKRAS_GLUtils_Device_nativeInit",
@@ -190,16 +206,39 @@ void port_run(void) {
   int show_fps = rt_config_value("display.show_fps", 1);
   u64 fps_t0 = armGetSystemTick();
   unsigned fps_n = 0;
+  u64 flush_t0 = fps_t0;
+  int log_quiet = 0;
+  int first_frame = 1;
 
   while (!rt_exit_requested() && appletMainLoop()) {
     rt_applet_poll();
     if (!rt_focused()) {
+      dcr_boost_idle(); /* HOME/sleep: no frame runs, none of it is a load */
       svcSleepThread(50000000ll);
       continue;
     }
     tdkr_input_poll();
     g_nat.step(env, g_lib_cls);
     tdkr_egl_swap();
+    dcr_boost_poll(); /* a past-50 ms frame (a load) boosts until it ends */
+    if (first_frame) {
+      first_frame = 0;
+      dcr_boost_launch_end(); /* start-up boost ends at the first picture */
+    }
+    /* Past the boot (180 pictures), the log goes to a RAM ring instead of
+     * the SD card on every line: fewer stalls while playing. The ring is
+     * written out every 10 s, and by the watchdog and the crash paths. */
+    if (!log_quiet && dcr_gl_frames() > 180) {
+      log_quiet = 1;
+      dcr_io_report_readahead();
+      dcr_io_report_patterns();
+      log_set_quiet(1);
+    }
+    if (log_quiet && armTicksToNs(armGetSystemTick() - flush_t0) >= 10000000000ull) {
+      flush_t0 = armGetSystemTick();
+      dcr_boost_report(); /* boosted frames, if any are new */
+      log_flush_ring();
+    }
     if (show_fps) {
       /* Time-based (not frame-count-based): at load-time frame rates a
        * 120-frame window would take minutes to report. */
@@ -214,6 +253,9 @@ void port_run(void) {
     }
   }
   rt_applet_stop();
+  if (log_quiet)
+    log_set_quiet(0); /* writes out what the ring holds */
+  log_flush_ring();
   g_running = 0; /* no onPause/destroy: the process ends, and the engine's teardown
                   * runs against threads and contexts that are going away */
 }

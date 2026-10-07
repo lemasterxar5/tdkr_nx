@@ -16,6 +16,9 @@
 /* The expansion file of a role (0 main, 1 patch) in <game folder>/obb: its
  * path (SD, with "sdmc:") in out; 1 when there is one. */
 int tdkr_obb_find(int patch, char *out, size_t cap);
+/* Menu vs gameplay as the wrapper sees it (zone files): 1 in l_menu. */
+void tdkr_zone_note(const char *path);
+int tdkr_zone_is_menu(void);
 /* The Android paths the game gets from Java (setPaths), as it would have
  * them: /sdcard/Android/obb/<package> is <game folder>/obb. */
 #define TDKR_OBB_ANDROID_DIR "/sdcard/Android/obb/" PORT_PACKAGE
@@ -33,6 +36,8 @@ void tdkr_egl_view_settings(int pixel, int depth, int stencil, int csaa);
 int tdkr_egl_set_current(int id);
 /* eglSwapBuffers on the window surface (through the runtime's frame hooks). */
 void tdkr_egl_swap(void);
+/* The centring crosshair, drawn over the finished frame (gameplay only). */
+void tdkr_crosshair_draw(void);
 
 /* ---------------------------------------------------------------- tdkr_audio.c */
 /* android.media.AudioTrack over audout; the handlers are in tdkr_java.c's table. */
@@ -51,6 +56,7 @@ void tdkr_audio_pause(int paused);
 /* Called once per frame, before step(): the touch screen as touchEvent()s and
  * the buttons as key events. */
 void tdkr_input_init(void);
+void tdkr_input_refresh(void); /* rebuild binds after a native toggle/init */
 void tdkr_input_poll(void);
 
 /* ---------------------------------------------------------------- tdkr_java.c */
@@ -91,5 +97,9 @@ void tdkr_gamepad_stick(float x, float y);
 
 /* The paths handed to setPaths(), by the first call and by Java's setupPaths(). */
 void tdkr_call_set_paths(void);
+
+/* After jni_init(): MonitorEnter/Exit lock for real (the runtime's are
+ * no-ops; loading threads would read each other's shared buffers). */
+void tdkr_java_patch_monitors(void);
 
 #endif /* TDKR_H */

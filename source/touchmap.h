@@ -47,5 +47,7 @@ typedef struct {
 void tm_pad_config(const TmPad *p);
 /* sticks: lx, ly, rx, ry, y up. D-pad in `now` drives the joystick too. */
 void tm_pad_poll(u64 now, u64 down, u64 up, const float *sticks, int win_w, int win_h);
+/* Lift the held stick-drag fingers (menu/gameplay change). */
+void tm_pad_reset(void);
 
 #endif /* TOUCHMAP_H */

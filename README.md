@@ -46,26 +46,49 @@ own variables).
 
 | Joy-Con | Action |
 | --- | --- |
-| Left stick or D-pad | drags the virtual joystick (`touch_joy_*`, 170/540 r90) plus native 8-way arrows |
+| Left stick | drags the virtual joystick (`touch_joy_*`, 158/585 r95, from the SWF) + native arrows 8-way, like the D-pad |
+| D-pad | arrows: menus + D-pad movement (keys 19-22) |
+| Driving | tap ZL to enter/leave drive mode, steer with the left stick (`touch_drive_*`, 640/620 r180, expo curve); `touch_drive_toggle = false` holds ZL instead |
 | Right stick | engine-native camera (`nativeSetPowerARightJoystick`, Y flippable with `gamepad_invert_y`); swipe when `gamepad_native = false` |
-| A / L | jump (`touch_btn_jump_*` 1030/610); A also confirms menus (key 23) |
-| B / R / right click | attack (`touch_btn_attack_*` 1150/550) |
-| X / ZR | counter (`touch_btn_counter_*` 1150/420) + SHIELD key |
-| Y / ZL / left click | interact / grapnel (`touch_btn_use_*` 1030/480) + SHIELD key |
-| D-pad | menu arrows and 8-way movement; `+` = Menu, `-` = Back |
-| `Minus+R3` | hot-swap native (gameplay) / raw (tech shop, menus) |
+| A | jump (`touch_btn_jump_*` 1030/610: climb, cape) + native key; also confirms menus (key 23), disarms bombs (key 96) |
+| B | attack (`touch_btn_attack_*` 1150/550) + native key; back in menus (key 4) |
+| X | attack (`touch_btn_attack_*` 1150/550: takedowns) + native key |
+| Y | counter (`touch_btn_counter_*` 1150/420: block, strike back) + use tap (`touch_btn_use_*` 1030/480) + native key |
+| ZR | the crosshair's action button (`touch_btn_qte_*` 640/360: doors, windshield, QTE) + native key |
+| L | sneak (`touch_btn_sneak_*` 1090/350, estimates) + native key |
+| R | grapnel hook (`touch_btn_grapnel_*` 1210/470, estimates: right trigger) + native key |
+| ZL / clicks | native keys (104/106/107) |
+| `+` / `-` | Menu / Back |
 | Touchscreen | always live alongside (driving slider, hacks, doors) |
+
+Menu vs gameplay is automatic (like the Dead Space port): the wrapper sees
+which zone the engine opened (`l_menu` = start menu, any other `l_*` =
+Gotham), plus pause panels inside gameplay zones (`+` opens one, `B` goes
+back, moving the stick means gameplay again). Where no full mapping runs
+there are no virtual fingers -- keys plus the touch screen -- so the stick
+can never land on the tech shop button, in the start menu or the pause
+menu; transitions lift everything the other side held. No manual mode
+switch.
 
 Positions are 1280x720 pixels in `[controls]` of `config.ini`. The game's
 buttons move with the context: if a tap misses, tune its coordinate.
 `gamepad_touch = false` leaves touch screen + keys only.
 
+Borrowed from the Dead Space port (`deadspace_nx`): real JNI monitors
+(the runtime's `MonitorEnter`/`Exit` lock nothing; loading threads would
+read each other's shared buffers), the log to a RAM ring past boot
+(flushed every 10 s), the HOME/sleep freeze hook, and the load-only CPU
+boost (a frame past 50 ms boosts until it ends; gameplay never does).
+
+A small centring crosshair is drawn over the frame in gameplay
+(`[display] crosshair`).
+
 ## Settings (`config.ini`)
 
 * `[display] resolution`: 720, 1080 or auto. `frame_rate`: 60 or 30 (30
   runs cooler in handheld). `show_fps`: an `[fps]` line every 2 s (default on).
-* `[performance] boost_cpu_when_loading`: `false` (stock clocks: the 1785
-  MHz load boost is off; GPU/RAM always stock).
+* `[performance] boost_cpu_when_loading`: `true` (CPU at 1785 MHz inside
+  loading frames only; gameplay stays at stock clocks).
 * `[controls]`: everything in the table above.
 * `[debug] log_java_calls`: every Java call (slow; for bug reports only).
 
@@ -119,3 +142,12 @@ and mesa32 (`portlibs32/`). Clean rebuild: `./build.sh clean`.
 
 Unofficial fan project, not affiliated with Nintendo or Gameloft. No game
 code or data included: you need your own APK and data files.
+
+### A note on docked vs handheld play
+
+Docked play is fully playable, but some of the game's context actions
+cannot be mapped to physical buttons: they appear as large touch buttons
+placed by the game itself (QTE prompts, takedowns), and on a controller
+they are pressed through the centre crosshair (`ZR`). For that reason the
+game is considerably more enjoyable in handheld mode, where the touch
+screen does those actions directly.
