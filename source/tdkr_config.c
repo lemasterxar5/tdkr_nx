@@ -9,7 +9,7 @@ static const CfgOpt k_opts[] = {
      "Frames per second: 60, or 30 (the Switch's GPU and battery work half as hard,\n"
      "# which helps in handheld mode; the game's own timing does not change).",
      CFG_CHOICE, "60,30", NULL},
-    {"display", "show_fps", "true", "Log the frame rate every 2 seconds ([fps] in debug.log).",
+    {"display", "show_fps", "false", "Log the frame rate every 2 seconds ([fps] in debug.log).",
      CFG_BOOL, NULL, NULL},
     {"display", "crosshair", "true", "A small centring crosshair in the middle of the screen (gameplay).",
      CFG_BOOL, NULL, NULL},
@@ -18,6 +18,11 @@ static const CfgOpt k_opts[] = {
      "# past 50 ms boosts until it ends (Horizon FastLoad, as retail loadings\n"
      "# do). Gameplay frames never boost, so the Switch keeps stock clocks\n"
      "# while playing.",
+     CFG_BOOL, NULL, NULL},
+    {"performance", "gpu_boost_handheld", "true",
+     "Handheld GPU at 460.8 MHz instead of 307.2 (an official handheld\n"
+     "# profile, as the Switch recomp ports use; CPU and MEM stay stock).\n"
+     "# Docked is untouched (768 MHz already).",
      CFG_BOOL, NULL, NULL},
     {"controls", "gamepad_keys", "true",
      "The buttons act as Android keys in the menus: D-pad = arrows, + = Menu,\n"
@@ -67,9 +72,15 @@ static const CfgOpt k_opts[] = {
      NULL, 0, 0, 0, 0},
     {"controls", "touch_btn_grapnel_y", "470", "Grapnel button tap (R, estimates).", CFG_INT, NULL,
      NULL, 0, 0, 0, 0},
-    {"controls", "touch_btn_qte_x", "640", "Crosshair action tap (ZR: doors, windshield, QTE).",
+    {"controls", "touch_btn_qte_x", "640", "Crosshair action tap (ZL: doors, windshield, QTE).",
      CFG_INT, NULL, NULL, 0, 0, 0, 0},
-    {"controls", "touch_btn_qte_y", "360", "Crosshair action tap (ZR: doors, windshield, QTE).",
+    {"controls", "touch_btn_qte_y", "360", "Crosshair action tap (ZL: doors, windshield, QTE).",
+     CFG_INT, NULL, NULL, 0, 0, 0, 0},
+    {"controls", "touch_btn_center_x", "640",
+     "Central-third general tap (ZR: its own point, not the crosshair's).",
+     CFG_INT, NULL, NULL, 0, 0, 0, 0},
+    {"controls", "touch_btn_center_y", "360",
+     "Central-third general tap (ZR: its own point, not the crosshair's).",
      CFG_INT, NULL, NULL, 0, 0, 0, 0},
     {"controls", "touch_drive_x", "640", "Driving slider centre (left stick X).", CFG_INT, NULL,
      NULL, 0, 0, 0, 0},
@@ -78,7 +89,8 @@ static const CfgOpt k_opts[] = {
     {"controls", "touch_drive_r", "180", "Driving slider travel at full tilt.", CFG_INT, NULL,
      NULL, 0, 0, 0, 0},
     {"controls", "touch_drive_toggle", "true",
-     "Tap ZL to enter/leave drive mode (no holding). false: hold ZL to drive, as before.",
+     "ZL + steered stick enters drive mode, any ZL tap leaves it (no holding).\n"
+     "# false: hold ZL to drive, as before.",
      CFG_BOOL, NULL, NULL},
     {"controls", "touch_cam_speed", "16", "Look speed: pixels per frame at full right-stick tilt.",
      CFG_INT, NULL, NULL, 0, 0, 0, 0},
@@ -110,6 +122,8 @@ static const CfgMigrate k_migrate[] = {
     {"controls", "touch_drive_r", "120", "180", 6},
     /* Load-only CPU boost from build 7 (Dead Space pattern). */
     {"performance", "boost_cpu_when_loading", "false", "true", 7},
+    /* FPS counter off from build 8 (quiet log). */
+    {"display", "show_fps", "true", "false", 8},
 };
 
 static const CfgTable k_table = {
@@ -117,7 +131,7 @@ static const CfgTable k_table = {
     .nopts = CFG_COUNT(k_opts),
     .migrate = k_migrate,
     .nmigrate = CFG_COUNT(k_migrate),
-    .version = 7,
+    .version = 8,
 };
 
 void dcr_config_load(void) { rt_config_load(&k_table); }

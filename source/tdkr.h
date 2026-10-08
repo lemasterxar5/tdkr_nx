@@ -102,4 +102,10 @@ void tdkr_call_set_paths(void);
  * no-ops; loading threads would read each other's shared buffers). */
 void tdkr_java_patch_monitors(void);
 
+/* ---------------------------------------------------------------- tdkr_gpu.c */
+/* Handheld GPU boost (460.8 MHz, MEM/CPU stock; docked is untouched). */
+void tdkr_gpu_boost_apply(void);  /* once, when the game is up */
+void tdkr_gpu_boost_tick(void);   /* dock/undock and option changes */
+void tdkr_gpu_boost_remove(void); /* back to the saved rate */
+
 #endif /* TDKR_H */

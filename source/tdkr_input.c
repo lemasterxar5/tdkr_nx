@@ -40,10 +40,14 @@ static int g_keylog;
 static int g_invert_y;
 static int g_drive_x, g_drive_y, g_drive_r, g_drive_on;
 static int g_drive_toggle = 1, g_drive_latch;
+static int g_ctr_x = 640, g_ctr_y = 360; /* central-third point (ZR) */
+static u64 g_zr_rep_t;
+static int g_zr_rep_on;
 static u64 g_skeys;
 static int g_applied = 1; /* tables currently loaded: 1 keys-only, 0 full */
 static int g_paused;      /* pause/menu panel open inside a gameplay zone */
 #define VDRIVE_KEY 0x80000030u
+#define VZRREP_KEY 0x80000031u
 
 static void build_binds(int nomove);
 
@@ -98,6 +102,10 @@ static void build_binds(int nomove) {
   int gy = rt_config_value("controls.touch_btn_grapnel_y", 470);
   int qx = rt_config_value("controls.touch_btn_qte_x", 640);
   int qy = rt_config_value("controls.touch_btn_qte_y", 360);
+  int zx = rt_config_value("controls.touch_btn_center_x", 640);
+  int zy = rt_config_value("controls.touch_btn_center_y", 360);
+  g_ctr_x = zx;
+  g_ctr_y = zy;
   g_drive_x = rt_config_value("controls.touch_drive_x", 640);
   g_drive_y = rt_config_value("controls.touch_drive_y", 620);
   g_drive_r = rt_config_value("controls.touch_drive_r", 180);
@@ -132,11 +140,10 @@ static void build_binds(int nomove) {
   g_binds[n++] = (TmBind){HidNpadButton_Y, tap ? cx : -1, tap ? cy : -1, keys ? (native ? 100 : -1) : -1};
   g_binds[n++] = (TmBind){HidNpadButton_L, tap ? sx : -1, tap ? sy : -1, keys ? (native ? 102 : -1) : -1};
   g_binds[n++] = (TmBind){HidNpadButton_R, tap ? gx : -1, tap ? gy : -1, keys ? (native ? 103 : -1) : -1};
-  g_binds[n++] = (TmBind){HidNpadButton_ZL, -1, -1, keys ? (native ? 104 : -1) : -1};
-  /* ZR is the crosshair's action button: whatever the centred giant circle
-   * is (QTE spam, doors, takedowns), ZR presses it. Dedicated, so no other
-   * button's tap can conflict with it. */
-  g_binds[n++] = (TmBind){HidNpadButton_ZR, tap ? qx : -1, tap ? qy : -1, keys ? (native ? 105 : -1) : -1};
+  g_binds[n++] = (TmBind){HidNpadButton_ZL, tap ? qx : -1, tap ? qy : -1, keys ? (native ? 104 : -1) : -1};
+  /* ZR is the central third's general tap: its own point (touch_btn_center_*),
+   * not the crosshair's. Dedicated, so no other button's tap conflicts. */
+  g_binds[n++] = (TmBind){HidNpadButton_ZR, tap ? zx : -1, tap ? zy : -1, keys ? (native ? 105 : -1) : -1};
   g_binds[n++] = (TmBind){HidNpadButton_StickL, -1, -1, keys ? (native ? 106 : -1) : -1};
   g_binds[n++] = (TmBind){HidNpadButton_StickR, -1, -1, keys ? (native ? 107 : -1) : -1};
   /* Y's second finger: the use/interact icon (context talks, hacks and
@@ -196,11 +203,12 @@ static void input_sampler(void *arg) {
         if (sticks[i] > 0.05f || sticks[i] < -0.05f)
           active = 1;
       u64 now = armGetSystemTick();
-      /* Idle 5 s: sample at 20 Hz instead of 120 Hz (battery/heat). */
+      /* Idle 5 s: sample at ~33 Hz instead of 120 Hz (battery/heat), still
+       * quick to wake on the first input. */
       if (active)
         quiet_since = now;
       else if (armTicksToNs(now - quiet_since) > 5000000000ull) {
-        svcSleepThread(50000000ll);
+        svcSleepThread(30000000ll);
         continue;
       }
       uint32_t h = __atomic_load_n(&g_head, __ATOMIC_RELAXED);
@@ -313,6 +321,10 @@ void tdkr_input_poll(void) {
         g_applied = nomove;
         tm_pad_reset();
         g_drive_latch = 0;
+        if (g_zr_rep_on) {
+          g_zr_rep_on = 0;
+          tm_up(VZRREP_KEY);
+        }
         if (g_drive_on) {
           g_drive_on = 0;
           tm_up(VDRIVE_KEY);
@@ -334,18 +346,24 @@ void tdkr_input_poll(void) {
                                            : "gameplay: full mapping (stick, camera, taps, drive)");
       }
     }
-    /* Driving (slider bar) is a latch: tapping ZL enters/leaves drive mode,
-     * no holding (or hold it the whole time with touch_drive_toggle=false).
-     * In drive mode the left stick's X steers the slider with a gentle expo
-     * curve instead of the joystick, so the two fingers never fight; the
-     * slider finger stays put (no engage/release flicker). ZL keeps its own
-     * key: the modal and the button are independent. */
+    /* Driving (slider bar) is a latch: ZL + steered stick enters it, any ZL
+     * tap leaves it (or hold ZL the whole time with touch_drive_toggle=false).
+     * Entry needs the stick deflected so plain ZL taps (the central-third
+     * general tap, gadget key) never engage it by accident. In drive mode the
+     * left stick's X steers the slider with a gentle expo curve instead of
+     * the joystick, so the two fingers never fight; the slider finger stays
+     * put (no engage/release flicker). */
     if (g_drive_toggle && (down & HidNpadButton_ZL)) {
-      g_drive_latch = !g_drive_latch;
-      debugPrintf("[input] drive mode %s\n", g_drive_latch ? "on (ZL to leave)" : "off");
-      if (!g_drive_latch && g_drive_on) {
-        g_drive_on = 0;
-        tm_up(VDRIVE_KEY);
+      float ex = s->sticks[0] < 0 ? -s->sticks[0] : s->sticks[0];
+      /* Entry needs the stick steered (a plain ZL tap is the central-third
+       * action); any tap while latched leaves it. */
+      if (g_drive_latch || ex >= 0.3f) {
+        g_drive_latch = !g_drive_latch;
+        debugPrintf("[input] drive mode %s\n", g_drive_latch ? "on (ZL to leave)" : "off");
+        if (!g_drive_latch && g_drive_on) {
+          g_drive_on = 0;
+          tm_up(VDRIVE_KEY);
+        }
       }
     }
     int drive = (g_drive_toggle ? g_drive_latch : (now & HidNpadButton_ZL) != 0) && g_tm.touch;
@@ -377,23 +395,28 @@ void tdkr_input_poll(void) {
         tm_move(VDRIVE_KEY, g_drive_x * w / 1280 + (int)(steer * r * w / 1280), g_drive_y * h / 720);
       }
     }
-    /* The stick also holds the native arrows (8-way), like the D-pad: the
-     * proven movement channel. The drag stays too. */
+    /* The stick also holds the arrows in 8 directions, like the D-pad.
+     * Magnitude-based (not per-axis): diagonals count too. Engage past 0.45
+     * with 0.25 per axis, hold through the band, release below 0.30. */
     {
       float lx = s->sticks[0], ly = s->sticks[1];
-      u64 want = 0;
-      if (lx > 0.5f)
-        want |= HidNpadButton_Right;
-      else if (lx < -0.5f)
-        want |= HidNpadButton_Left;
-      if (ly > 0.5f)
-        want |= HidNpadButton_Up;
-      else if (ly < -0.5f)
-        want |= HidNpadButton_Down;
-      if (lx > -0.35f && lx < 0.35f)
-        want &= ~(u64)(HidNpadButton_Left | HidNpadButton_Right);
-      if (ly > -0.35f && ly < 0.35f)
-        want &= ~(u64)(HidNpadButton_Up | HidNpadButton_Down);
+      float mag = sqrtf(lx * lx + ly * ly);
+      u64 want;
+      if (mag > 0.45f) {
+        want = 0;
+        if (lx > 0.25f)
+          want |= HidNpadButton_Right;
+        else if (lx < -0.25f)
+          want |= HidNpadButton_Left;
+        if (ly > 0.25f)
+          want |= HidNpadButton_Up;
+        else if (ly < -0.25f)
+          want |= HidNpadButton_Down;
+      } else if (mag < 0.30f) {
+        want = 0;
+      } else {
+        want = g_skeys; /* hysteresis band: keep holding */
+      }
       /* The physical D-pad already sends its own keys: don't double them. */
       want &= ~(now & (HidNpadButton_Up | HidNpadButton_Down | HidNpadButton_Left | HidNpadButton_Right));
       u64 got = want & ~g_skeys, lost = g_skeys & ~want;
@@ -414,6 +437,27 @@ void tdkr_input_poll(void) {
         tm_key(21, 0);
       if (lost & HidNpadButton_Right)
         tm_key(22, 0);
+    }
+    /* ZR held: auto-mash the central third (doors, QTE spam). The bind taps
+     * once on the edge; holding repeats every 100 ms until let go. */
+    {
+      int zr = (now & HidNpadButton_ZR) != 0 && g_tm.touch;
+      u64 t = armGetSystemTick();
+      if (!zr) {
+        g_zr_rep_t = 0;
+        if (g_zr_rep_on) {
+          g_zr_rep_on = 0;
+          tm_up(VZRREP_KEY);
+        }
+      } else if (!g_zr_rep_t) {
+        g_zr_rep_t = t;
+      } else if (armTicksToNs(t - g_zr_rep_t) >= 100000000ull) {
+        g_zr_rep_t = t;
+        if (g_zr_rep_on)
+          tm_up(VZRREP_KEY);
+        g_zr_rep_on = 1;
+        tm_down(VZRREP_KEY, g_ctr_x * w / 1280, g_ctr_y * h / 720);
+      }
     }
     __atomic_store_n(&g_tail, (last + 1) & (SNAP_RING - 1), __ATOMIC_RELEASE);
   }

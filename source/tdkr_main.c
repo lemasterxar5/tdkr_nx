@@ -202,6 +202,7 @@ void port_run(void) {
   g_running = 1;
   port_focus_gained(); /* stateChanged(1), onResume */
   dcr_watchdog_start();
+  tdkr_gpu_boost_apply();
   debugPrintf("[boot] the game is running (%dx%d)\n", w, h);
   int show_fps = rt_config_value("display.show_fps", 1);
   u64 fps_t0 = armGetSystemTick();
@@ -236,6 +237,7 @@ void port_run(void) {
     }
     if (log_quiet && armTicksToNs(armGetSystemTick() - flush_t0) >= 10000000000ull) {
       flush_t0 = armGetSystemTick();
+      tdkr_gpu_boost_tick(); /* dock/undock and option changes */
       dcr_boost_report(); /* boosted frames, if any are new */
       log_flush_ring();
     }
@@ -253,6 +255,7 @@ void port_run(void) {
     }
   }
   rt_applet_stop();
+  tdkr_gpu_boost_remove();
   if (log_quiet)
     log_set_quiet(0); /* writes out what the ring holds */
   log_flush_ring();
